@@ -50,8 +50,6 @@ import HighLevelFeatures as HLF
 
 from evaluate_plotting_helper import *
 
-torch.set_default_dtype(torch.float64)
-
 plt.rc('text', usetex=True)
 plt.rc('text.latex', preamble=r'\usepackage{amsmath,amssymb}')
 plt.rc('font', family='serif')
@@ -177,7 +175,7 @@ def prepare_low_data_for_classifier(voxel, E_inc, hlf_class, label, normed=False
                               label*np.ones_like(E_inc)], axis=1)
     else:
         voxel = 100.* voxel / E_inc
-        ret = np.concatenate([np.log10(E_inc), voxel, label*np.ones_like(E_inc)], axis=1)
+        ret = np.concatenate([np.log10(E_inc), voxel, label*np.ones_like(E_inc)], axis=1, dtype='float32')
     return ret
 
 def prepare_high_data_for_classifier(E_inc, hlf_class, label):
@@ -202,7 +200,7 @@ def prepare_high_data_for_classifier(E_inc, hlf_class, label):
     Width_etas = np.concatenate(Width_etas, axis=1)
     Width_phis = np.concatenate(Width_phis, axis=1)
     ret = np.concatenate([np.log10(E_inc), np.log10(E_layer+1e-8), EC_etas/1e2, EC_phis/1e2,
-                          Width_etas/1e2, Width_phis/1e2, label*np.ones_like(E_inc)], axis=1)
+                          Width_etas/1e2, Width_phis/1e2, label*np.ones_like(E_inc)], axis=1, dtype='float32')
     return ret
 
 def ttv_split(data1, data2, split=np.array([0.6, 0.2, 0.2])):
@@ -304,7 +302,7 @@ def evaluate_cls(model, data_test, arg, final_eval=False, calibration_data=None)
         input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
         output_vector = model(input_vector)
         pred = output_vector.reshape(-1)
-        target = target_vector.double()
+        target = target_vector
         if j == 0:
             result_true = target
             result_pred = pred
@@ -352,7 +350,7 @@ def calibrate_classifier(model, calibration_data, arg):
         input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
         output_vector = model(input_vector)
         pred = torch.sigmoid(output_vector).reshape(-1)
-        target = target_vector.to(torch.float64)
+        target = target_vector
         if j == 0:
             result_true = target
             result_pred = pred
