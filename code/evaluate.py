@@ -107,6 +107,8 @@ parser.add_argument('--reference_file_2', default=None,
 #parser.add_argument('--cls_load', action='store_true', default=False,
 #                    help='Whether or not load classifier from --output_dir')
 
+parser.add_argument('--cls_resnet_layers', type=int, default=-1,
+                    help='Number of layers in the ResNet classifier, default is -1.')
 parser.add_argument('--cls_n_layer', type=int, default=2,
                     help='Number of hidden layers in the classifier, default is 2.')
 parser.add_argument('--cls_n_hidden', type=int, default='2048',
@@ -233,7 +235,7 @@ def load_classifier(constructed_model, parser_args):
     return constructed_model
 
 
-def train_and_evaluate_cls(model, data_train, data_test, optim, arg):
+def train_and_evaluate_cls(model, data_train, data_test, optim, lr_scheduler, arg):
     """ train the model and evaluate along the way"""
     best_eval_acc = float('-inf')
     arg.best_epoch = -1
@@ -250,6 +252,8 @@ def train_and_evaluate_cls(model, data_train, data_test, optim, arg):
                            os.path.join(arg.output_dir, filename))
             if eval_acc == 1.:
                 break
+            if lr_scheduler is not None:
+                lr_scheduler.step()
     except KeyboardInterrupt:
         # training can be cut short with ctrl+c, for example if overfitting between train/test set
         # is clearly visible
@@ -598,18 +602,34 @@ if __name__ == '__main__':
 
         # set up DNN classifier
         input_dim = train_data.shape[1]-1
-        DNN_kwargs = {'num_layer':args.cls_n_layer,
-                      'num_hidden':args.cls_n_hidden,
-                      'input_dim':input_dim,
-                      'dropout_probability':args.cls_dropout_probability}
-        classifier = DNN(**DNN_kwargs)
+        if args.mode == 'cls-low' and args.cls_resnet_layers > 0:
+            from resnet import generate_model
+            classifier = generate_model(
+                args.cls_resnet_layers,
+                img_shape={'2': (45, 16, 9), '3': (45, 50, 18)}[args.dataset]
+            )
+        else:
+            DNN_kwargs = {'num_layer':args.cls_n_layer,
+                        'num_hidden':args.cls_n_hidden,
+                        'input_dim':input_dim,
+                        'dropout_probability':args.cls_dropout_probability}
+            classifier = DNN(**DNN_kwargs)
         classifier.to(args.device)
         print(classifier)
         total_parameters = sum(p.numel() for p in classifier.parameters() if p.requires_grad)
 
         print("{} has {} parameters".format(args.mode, int(total_parameters)))
 
-        optimizer = torch.optim.Adam(classifier.parameters(), lr=args.cls_lr)
+        if args.mode == 'cls-low' and args.cls_resnet_layers > 0:
+            optimizer = torch.optim.AdamW(classifier.parameters(), lr=args.cls_lr, weight_decay=0.01)
+            num_decay_epochs = max(1, int(args.cls_n_epochs * 0.3))
+            milestones = list(range(args.cls_n_epochs - num_decay_epochs, args.cls_n_epochs))
+            gamma = 0.01 ** (1. / num_decay_epochs)
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, verbose=True)
+        else:
+            optimizer = torch.optim.Adam(classifier.parameters(), lr=args.cls_lr)
+            lr_scheduler = None
+
 
         if args.save_mem:
             train_data = TensorDataset(torch.tensor(train_data))
@@ -626,7 +646,7 @@ if __name__ == '__main__':
         val_dataloader = DataLoader(val_data, batch_size=args.cls_batch_size, shuffle=False)
         print("Creating dataloaders DONE.")
 
-        train_and_evaluate_cls(classifier, train_dataloader, test_dataloader, optimizer, args)
+        train_and_evaluate_cls(classifier, train_dataloader, test_dataloader, optimizer, lr_scheduler, args)
         classifier = load_classifier(classifier, args)
 
         if args.dataset == '3':
